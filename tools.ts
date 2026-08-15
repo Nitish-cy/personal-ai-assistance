@@ -113,7 +113,7 @@ export const createEventTool = tool(
         const { summary, start, end, attendees } = eventData as EventData;
 
         const response = await calendar.events.insert({
-            calendarId: 'mishranitish2205@gmail.com',
+            calendarId: 'primary',
             sendUpdates: 'all',
             conferenceDataVersion: 1,
             requestBody: {
