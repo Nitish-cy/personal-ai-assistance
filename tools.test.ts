@@ -1,5 +1,9 @@
 import { google } from 'googleapis';
 
+jest.mock('./google-account', () => ({
+    getGoogleClientForUser: jest.fn(),
+}));
+
 jest.mock('googleapis', () => ({
     google: {
         auth: {

@@ -1,19 +1,38 @@
 import { tool } from '@langchain/core/tools';
+import type { RunnableConfig } from '@langchain/core/runnables';
 import { google } from 'googleapis';
 import z from 'zod';
+import { getGoogleClientForUser } from './google-account';
 
-const oauth2Client = new google.auth.OAuth2(
-    process.env.GOOGLE_CLIENT_ID,
-    process.env.GOOGLE_CLIENT_SECRET,
-    process.env.GOOGLE_REDIRECT_URL
-);
+function buildLegacyOAuthClient() {
+    const client = new google.auth.OAuth2(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        process.env.GOOGLE_REDIRECT_URL
+    );
 
-oauth2Client.setCredentials({
-    access_token: process.env.GOOGLE_ACCESS_TOKEN ?? null,
-    refresh_token: process.env.GOOGLE_REFRESH_TOKEN ?? null,
-});
+    client.setCredentials({
+        access_token: process.env.GOOGLE_ACCESS_TOKEN ?? null,
+        refresh_token: process.env.GOOGLE_REFRESH_TOKEN ?? null,
+    });
 
-const calendar = google.calendar({ version: 'v3', auth: oauth2Client });
+    return client;
+}
+
+// Web/API requests carry a userId in config.configurable and use that user's
+// connected Google account. The CLI (index.ts) has no user/session concept at
+// all, so it falls back to the single account configured via .env.
+async function getCalendarClientForConfig(config?: RunnableConfig) {
+    const userId = config?.configurable?.userId as string | undefined;
+
+    const oauth2Client = userId ? await getGoogleClientForUser(userId) : buildLegacyOAuthClient();
+
+    if (!oauth2Client) {
+        throw new Error('No connected Google Calendar account for this user.');
+    }
+
+    return google.calendar({ version: 'v3', auth: oauth2Client });
+}
 
 type Params = {
     q: string;
@@ -21,7 +40,7 @@ type Params = {
     timeMax: string;
 };
 export const getEventsTool = tool(
-    async (params) => {
+    async (params, config) => {
         /**
          * timeMin
          * timeMax
@@ -30,6 +49,7 @@ export const getEventsTool = tool(
         const { q, timeMin, timeMax } = params as Params;
 
         try {
+            const calendar = await getCalendarClientForConfig(config);
             const response = await calendar.events.list({
                 calendarId: 'primary',
                 q: q,
@@ -109,9 +129,10 @@ type EventData = z.infer<typeof createEventSchema>;
 //     attendees: attendee[];
 // };
 export const createEventTool = tool(
-    async (eventData) => {
+    async (eventData, config) => {
         const { summary, start, end, attendees } = eventData as EventData;
 
+        const calendar = await getCalendarClientForConfig(config);
         const response = await calendar.events.insert({
             calendarId: 'primary',
             sendUpdates: 'all',

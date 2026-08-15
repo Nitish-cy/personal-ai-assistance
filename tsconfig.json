@@ -40,5 +40,12 @@
     "noUncheckedSideEffectImports": true,
     "moduleDetection": "force",
     "skipLibCheck": true,
+
+    // TypeORM decorator support
+    // NOTE: emitDecoratorMetadata is NOT honored by tsx/esbuild at runtime -
+    // entity columns must declare explicit types rather than relying on inference.
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "useDefineForClassFields": false,
   }
 }
