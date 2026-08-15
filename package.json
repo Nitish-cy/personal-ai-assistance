@@ -5,10 +5,10 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
-    "dev": "tsx index.ts",
-    "server": "tsx server.ts",
-    "migration:run": "tsx migrate.ts run",
-    "migration:revert": "tsx migrate.ts revert",
+    "dev": "tsx src/index.ts",
+    "server": "tsx src/server.ts",
+    "migration:run": "tsx src/migrate.ts run",
+    "migration:revert": "tsx src/migrate.ts revert",
     "test": "jest"
   },
   "keywords": [],

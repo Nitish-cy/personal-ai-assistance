@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { NextFunction, Request, Response } from 'express';
-import { dataSource } from './data-source';
-import { Session } from './entities/Session';
+import { dataSource } from '../../config/data-source';
+import { Session } from '../../entities/Session';
 
 export { hashPassword, verifyPassword } from './password';
 

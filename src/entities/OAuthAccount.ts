@@ -26,7 +26,7 @@ export class OAuthAccount {
     @Column('varchar', { length: 50 })
     provider!: string;
 
-    // Encrypted at rest - see crypto-util.ts. Never store these in plaintext.
+    // Encrypted at rest - see lib/crypto-util.ts. Never store these in plaintext.
     @Column('text')
     accessToken!: string;
 

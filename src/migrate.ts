@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { dataSource } from './data-source';
+import { dataSource } from './config/data-source';
 
 const command = process.argv[2];
 

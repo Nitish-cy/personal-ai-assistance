@@ -1,8 +1,8 @@
 import { google } from 'googleapis';
 import type { Credentials } from 'google-auth-library';
-import { dataSource } from './data-source';
-import { OAuthAccount } from './entities/OAuthAccount';
-import { decrypt, encrypt } from './crypto-util';
+import { dataSource } from '../../config/data-source';
+import { OAuthAccount } from '../../entities/OAuthAccount';
+import { decrypt, encrypt } from '../../lib/crypto-util';
 
 const PROVIDER = 'google';
 

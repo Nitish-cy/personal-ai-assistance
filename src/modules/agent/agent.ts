@@ -1,5 +1,5 @@
 import { ChatGroq } from '@langchain/groq';
-import { createEventTool, getEventsTool } from './tools';
+import { createEventTool, getEventsTool } from '../calendar/tools';
 import { END, MemorySaver, MessagesAnnotation, StateGraph } from '@langchain/langgraph';
 import { ToolNode } from '@langchain/langgraph/prebuilt';
 import { shouldContinue } from './routing';
