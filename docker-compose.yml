@@ -10,6 +10,44 @@ services:
       - '5433:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Overrides .env's host-side value (localhost:5433) - inside the compose
+      # network, Postgres is reached by service name on its own internal port.
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/personal_assistant?schema=public
+    ports:
+      - '3600:3600'
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./web
+      dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://backend:3600
+    restart: unless-stopped
+    environment:
+      # Next's server process (SSR fetches + the rewrites() proxy) runs inside
+      # this container, so it reaches the backend via the compose network, not
+      # whatever localhost URL a browser on the host would use.
+      BACKEND_URL: http://backend:3600
+    ports:
+      - '3000:3000'
+    depends_on:
+      - backend
 
 volumes:
   postgres_data:

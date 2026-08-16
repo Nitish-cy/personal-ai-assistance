@@ -1,8 +1,11 @@
 import 'dotenv/config';
 import readline from 'node:readline/promises';
 import { agentApp, buildSystemMessage } from './modules/agent/agent';
+import { checkpointer } from './config/checkpointer';
 
 async function main() {
+    await checkpointer.setup();
+
     const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
     let config = { configurable: { thread_id: '1' } };
 

@@ -47,5 +47,6 @@
     "experimentalDecorators": true,
     "emitDecoratorMetadata": true,
     "useDefineForClassFields": false,
-  }
+  },
+  "exclude": ["node_modules", "web"]
 }

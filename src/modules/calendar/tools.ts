@@ -2,7 +2,8 @@ import { tool } from '@langchain/core/tools';
 import type { RunnableConfig } from '@langchain/core/runnables';
 import { google } from 'googleapis';
 import z from 'zod';
-import { getGoogleClientForUser } from './google-account';
+import { getCalendarClientForUser } from './calendar-service';
+import { findFreeSlots } from './scheduling';
 
 function buildLegacyOAuthClient() {
     const client = new google.auth.OAuth2(
@@ -16,7 +17,7 @@ function buildLegacyOAuthClient() {
         refresh_token: process.env.GOOGLE_REFRESH_TOKEN ?? null,
     });
 
-    return client;
+    return google.calendar({ version: 'v3', auth: client });
 }
 
 // Web/API requests carry a userId in config.configurable and use that user's
@@ -25,36 +26,27 @@ function buildLegacyOAuthClient() {
 async function getCalendarClientForConfig(config?: RunnableConfig) {
     const userId = config?.configurable?.userId as string | undefined;
 
-    const oauth2Client = userId ? await getGoogleClientForUser(userId) : buildLegacyOAuthClient();
-
-    if (!oauth2Client) {
-        throw new Error('No connected Google Calendar account for this user.');
-    }
-
-    return google.calendar({ version: 'v3', auth: oauth2Client });
+    return userId ? getCalendarClientForUser(userId) : buildLegacyOAuthClient();
 }
 
 type Params = {
-    q: string;
+    q?: string;
     timeMin: string;
     timeMax: string;
 };
 export const getEventsTool = tool(
     async (params, config) => {
-        /**
-         * timeMin
-         * timeMax
-         * q
-         */
         const { q, timeMin, timeMax } = params as Params;
 
         try {
             const calendar = await getCalendarClientForConfig(config);
             const response = await calendar.events.list({
                 calendarId: 'primary',
-                q: q,
                 timeMin,
                 timeMax,
+                singleEvents: true,
+                orderBy: 'startTime',
+                ...(q ? { q } : {}),
             });
 
             const result = response.data.items?.map((event) => {
@@ -80,12 +72,14 @@ export const getEventsTool = tool(
     },
     {
         name: 'get-events',
-        description: 'Call to get the calendar events.',
+        description:
+            'Lists calendar events within a time range. Use this for any "what/when are my events" question, not just searches.',
         schema: z.object({
             q: z
                 .string()
+                .optional()
                 .describe(
-                    "The query to be used to get events from google calendar. It can be one of these values: summary, description, location, attendees display name, attendees email, organiser's name, organiser's email"
+                    "Optional free-text filter matching summary, description, location, attendee, or organiser. Omit this entirely (do not pass an empty string) when the user just wants to see everything in the time range, e.g. \"do I have meetings today\" - only set it when they name something specific to search for, e.g. \"find my meeting with Raj\"."
                 ),
             timeMin: z.string().describe('The from datetime to get events.'),
             timeMax: z.string().describe('The to datetime to get events.'),
@@ -113,6 +107,12 @@ const createEventSchema = z.object({
             displayName: z.string().describe('Then name of the attendee.'),
         })
     ),
+    ignoreConflicts: z
+        .boolean()
+        .optional()
+        .describe(
+            'Set true only if the user has explicitly confirmed they want to book this time despite a scheduling conflict you already warned them about.'
+        ),
 });
 
 type EventData = z.infer<typeof createEventSchema>;
@@ -130,9 +130,23 @@ type EventData = z.infer<typeof createEventSchema>;
 // };
 export const createEventTool = tool(
     async (eventData, config) => {
-        const { summary, start, end, attendees } = eventData as EventData;
+        const { summary, start, end, attendees, ignoreConflicts } = eventData as EventData;
 
         const calendar = await getCalendarClientForConfig(config);
+
+        if (!ignoreConflicts) {
+            const freebusy = await calendar.freebusy.query({
+                requestBody: { timeMin: start.dateTime, timeMax: end.dateTime, items: [{ id: 'primary' }] },
+            });
+            const busy = freebusy.data.calendars?.primary?.busy ?? [];
+
+            if (busy.length > 0) {
+                return `Scheduling conflict: the user already has ${busy.length} event(s) during that time (${JSON.stringify(
+                    busy
+                )}). Do not create the event. Tell the user about the conflict, call find-free-slots to suggest alternatives, and only call create-event again with ignoreConflicts=true if they explicitly confirm they want this time anyway.`;
+            }
+        }
+
         const response = await calendar.events.insert({
             calendarId: 'primary',
             sendUpdates: 'all',
@@ -163,5 +177,116 @@ export const createEventTool = tool(
         name: 'create-event',
         description: 'Call to create the calendar events.',
         schema: createEventSchema,
+    }
+);
+
+const updateEventSchema = z.object({
+    eventId: z.string().describe('The id of the event to update, obtained from a prior get-events call.'),
+    summary: z.string().optional().describe('The new title of the event, if it is changing.'),
+    start: z
+        .object({
+            dateTime: z.string().describe('The new start date time of the event.'),
+            timeZone: z.string().describe('Current IANA timezone string.'),
+        })
+        .optional()
+        .describe('The new start time, if rescheduling.'),
+    end: z
+        .object({
+            dateTime: z.string().describe('The new end date time of the event.'),
+            timeZone: z.string().describe('Current IANA timezone string.'),
+        })
+        .optional()
+        .describe('The new end time, if rescheduling.'),
+});
+
+export const updateEventTool = tool(
+    async (params, config) => {
+        const { eventId, summary, start, end } = params as z.infer<typeof updateEventSchema>;
+
+        try {
+            const calendar = await getCalendarClientForConfig(config);
+
+            const requestBody: Record<string, unknown> = {};
+            if (summary) requestBody.summary = summary;
+            if (start) requestBody.start = start;
+            if (end) requestBody.end = end;
+
+            await calendar.events.patch({ calendarId: 'primary', eventId, requestBody });
+
+            return 'The event has been updated.';
+        } catch (err) {
+            console.log('EERRRR', err);
+            return 'Failed to update the event.';
+        }
+    },
+    {
+        name: 'update-event',
+        description:
+            "Updates an existing calendar event, such as rescheduling it or renaming it. Requires the event's exact id, which must first be found via get-events. Only call this after the user has explicitly confirmed the specific event and the change being made - never call it from a vague or unconfirmed request.",
+        schema: updateEventSchema,
+    }
+);
+
+const deleteEventSchema = z.object({
+    eventId: z.string().describe('The id of the event to delete, obtained from a prior get-events call.'),
+});
+
+const findFreeSlotsSchema = z.object({
+    timeMin: z.string().describe('Start of the search range (ISO datetime).'),
+    timeMax: z.string().describe('End of the search range (ISO datetime).'),
+    durationMinutes: z.number().describe('Desired meeting duration in minutes.'),
+});
+
+export const findFreeSlotsTool = tool(
+    async (params, config) => {
+        const { timeMin, timeMax, durationMinutes } = params as z.infer<typeof findFreeSlotsSchema>;
+
+        try {
+            const calendar = await getCalendarClientForConfig(config);
+            const freebusy = await calendar.freebusy.query({
+                requestBody: { timeMin, timeMax, items: [{ id: 'primary' }] },
+            });
+
+            const busy = (freebusy.data.calendars?.primary?.busy ?? [])
+                .filter((slot) => slot.start && slot.end)
+                .map((slot) => ({ start: new Date(slot.start!), end: new Date(slot.end!) }));
+
+            const slots = findFreeSlots(busy, new Date(timeMin), new Date(timeMax), durationMinutes);
+
+            return JSON.stringify(
+                slots.map((slot) => ({ start: slot.start.toISOString(), end: slot.end.toISOString() }))
+            );
+        } catch (err) {
+            console.log('EERRRR', err);
+            return 'Failed to check availability.';
+        }
+    },
+    {
+        name: 'find-free-slots',
+        description:
+            'Finds available time slots of the given duration within a date range, respecting working hours (9am-6pm local time) and the existing events on the calendar.',
+        schema: findFreeSlotsSchema,
+    }
+);
+
+export const deleteEventTool = tool(
+    async (params, config) => {
+        const { eventId } = params as z.infer<typeof deleteEventSchema>;
+
+        try {
+            const calendar = await getCalendarClientForConfig(config);
+            await calendar.events.delete({ calendarId: 'primary', eventId });
+
+            return 'The event has been deleted.';
+        } catch (err) {
+            console.log('EERRRR', err);
+            return 'Failed to delete the event.';
+        }
+    },
+    {
+        name: 'delete-event',
+        description:
+            "Permanently deletes a calendar event. Requires the event's exact id, which must first be found via get-events. Only call this after the user has explicitly confirmed they want to delete this specific event - never delete without explicit confirmation.",
+        schema: deleteEventSchema,
     }
 );

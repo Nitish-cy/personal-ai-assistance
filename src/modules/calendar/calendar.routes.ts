@@ -2,12 +2,16 @@ import { Router } from 'express';
 import { google } from 'googleapis';
 import { requireAuth } from '../auth/auth';
 import { saveGoogleTokensForUser } from './google-account';
+import { dataSource } from '../../config/data-source';
+import { OAuthAccount } from '../../entities/OAuthAccount';
 
 const oauth2Client = new google.auth.OAuth2(
     process.env.GOOGLE_CLIENT_ID,
     process.env.GOOGLE_CLIENT_SECRET,
     process.env.GOOGLE_REDIRECT_URL
 );
+
+const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:3000';
 
 // Short-lived CSRF state for the OAuth round trip: maps a random, single-use
 // token to the user who initiated the connection, so /callback knows who Google
@@ -56,19 +60,27 @@ calendarRouter.get('/callback', async (req, res) => {
     const state = req.query.state as string | undefined;
 
     if (!code || !state) {
-        res.status(400).send('Missing authorization code or state.');
+        res.redirect(`${FRONTEND_URL}/dashboard?calendar=error`);
         return;
     }
 
     const userId = consumeOAuthState(state);
 
     if (!userId) {
-        res.status(400).send('This authorization link is invalid or has expired. Please try connecting again.');
+        res.redirect(`${FRONTEND_URL}/dashboard?calendar=error`);
         return;
     }
 
     const { tokens } = await oauth2Client.getToken(code);
     await saveGoogleTokensForUser(userId, tokens);
 
-    res.send('Connected ✅ You can close this tab now.');
+    res.redirect(`${FRONTEND_URL}/dashboard?calendar=connected`);
+});
+
+calendarRouter.get('/api/calendar/status', requireAuth, async (req, res) => {
+    const account = await dataSource
+        .getRepository(OAuthAccount)
+        .findOne({ where: { userId: req.user!.id, provider: 'google' } });
+
+    res.json({ connected: !!account });
 });

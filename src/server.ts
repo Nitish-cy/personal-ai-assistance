@@ -1,19 +1,7 @@
 import 'dotenv/config';
-import 'reflect-metadata';
-import express from 'express';
-import cookieParser from 'cookie-parser';
+import { app } from './app';
 import { dataSource } from './config/data-source';
-import { authRouter } from './modules/auth/auth.routes';
-import { calendarRouter } from './modules/calendar/calendar.routes';
-import { agentRouter } from './modules/agent/agent.routes';
-
-const app = express();
-app.use(express.json());
-app.use(cookieParser(process.env.SESSION_SECRET));
-
-app.use(calendarRouter);
-app.use('/api', authRouter);
-app.use('/api/agent', agentRouter);
+import { checkpointer } from './config/checkpointer';
 
 async function start() {
     await dataSource.initialize();
@@ -24,6 +12,9 @@ async function start() {
     if (process.env.NODE_ENV !== 'production') {
         await dataSource.runMigrations();
     }
+
+    // Idempotent by design (see config/checkpointer.ts) - safe to call on every boot.
+    await checkpointer.setup();
 
     app.listen(3600, () => console.log(`Server is running on port 3600`));
 }
