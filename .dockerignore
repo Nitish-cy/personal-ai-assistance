@@ -1,0 +1,11 @@
+node_modules
+web
+.git
+.env
+.env.*
+!.env.example
+*.log
+coverage
+.claude
+plan.md
+docker-compose.yml
